@@ -312,6 +312,27 @@ async def web_app_celular():
       }
     }
 
+    // Divide textos grandes (como A Sentinela inteira) em partes lógicas de áudio (~1000 caracteres)
+    function dividirTextoEmBlocosDeAudio(texto) {
+      const frases = texto.split(/(?<=[.!?।:;])\s+/);
+      const blocos = [];
+      let atual = "";
+
+      for (const f of frases) {
+        if ((atual + " " + f).trim().length <= 1100) {
+          atual = (atual + " " + f).trim();
+        } else {
+          if (atual) blocos.push(atual);
+          atual = f.trim();
+        }
+      }
+      if (atual) blocos.push(atual);
+      return blocos.length > 0 ? blocos : [texto];
+    }
+
+    let playlistBlocosAudio = [];
+    let indiceBlocoAtual = 0;
+
     async function falarComVozHumana(texto) {
       if (!texto) return;
 
@@ -324,48 +345,58 @@ async def web_app_celular():
         blobUrlAtual = null;
       }
 
+      playlistBlocosAudio = dividirTextoEmBlocosDeAudio(texto);
+      indiceBlocoAtual = 0;
+      tocarProximoBlocoPlaylist();
+    }
+
+    async function tocarProximoBlocoPlaylist() {
+      if (indiceBlocoAtual >= playlistBlocosAudio.length) {
+        estadoAtual = 'ocioso';
+        document.getElementById('txtBotao').innerText = "🎙️ TOQUE PARA FALAR";
+        tocarBip(740, 100);
+        return;
+      }
+
       estadoAtual = 'falando';
       const btn = document.getElementById('btnVoz');
       const txt = document.getElementById('txtBotao');
-      btn.classList.add('carregando');
-      txt.innerText = "⏳ GERANDO VOZ HUMANA...";
+      
+      const trechoAtual = playlistBlocosAudio[indiceBlocoAtual];
+      const progresso = playlistBlocosAudio.length > 1 ? ` (${indiceBlocoAtual + 1}/${playlistBlocosAudio.length})` : "";
+      txt.innerText = `🔊 LENDO...${progresso} (1 TOQUE P/ PAUSAR)`;
 
       try {
         const res = await fetch('/falar-audio', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ texto: texto })
+          body: JSON.stringify({ texto: trechoAtual })
         });
 
         if (!res.ok) throw new Error("Erro na síntese neural.");
 
         const blob = await res.blob();
+        if (blobUrlAtual) {
+          URL.revokeObjectURL(blobUrlAtual);
+        }
         blobUrlAtual = URL.createObjectURL(blob);
         audioAtual.src = blobUrlAtual;
 
-        btn.classList.remove('carregando');
-        txt.innerText = "🔊 LENDO... (1 TOQUE P/ PAUSAR)";
-
         audioAtual.onended = () => {
-          estadoAtual = 'ocioso';
-          txt.innerText = "🎙️ TOQUE PARA FALAR";
-          if (blobUrlAtual) {
-            URL.revokeObjectURL(blobUrlAtual);
-            blobUrlAtual = null;
-          }
+          indiceBlocoAtual++;
+          tocarProximoBlocoPlaylist();
         };
 
         audioAtual.onerror = () => {
-          btn.classList.remove('carregando');
-          txt.innerText = "🎙️ TOQUE PARA FALAR";
-          estadoAtual = 'ocioso';
+          // Se um bloco falhar, pula para o próximo para não travar o restante
+          indiceBlocoAtual++;
+          tocarProximoBlocoPlaylist();
         };
 
         await audioAtual.play();
       } catch (err) {
-        btn.classList.remove('carregando');
-        txt.innerText = "🎙️ TOQUE PARA FALAR";
-        estadoAtual = 'ocioso';
+        indiceBlocoAtual++;
+        tocarProximoBlocoPlaylist();
       }
     }
 

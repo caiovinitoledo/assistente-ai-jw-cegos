@@ -108,12 +108,28 @@ class AssistenteAcessivelIA:
         # 3. Estudo de A Sentinela
         if "sentinela" in cmd:
             conteudo = await self.browser.obter_reuniao_semana_jw(tipo="sentinela")
-            if any(p in cmd for p in ["parágrafo", "paragrafo", "resumo", "pergunta"]):
+            
+            # Se o usuário pediu parágrafo específico (ex: "Ler parágrafo 5 de A Sentinela")
+            match_paragrafo = re.search(r"par[aá]grafo\s+(\d+)", cmd)
+            if match_paragrafo:
+                num_p = match_paragrafo.group(1)
+                # Tenta localizar o início do parágrafo desejado
+                padrao_p = rf"(?:^|\.\s*)({num_p}\.\s+.*?)(?=(?:\.\s*\d+\.\s+)|$)"
+                match_trecho = re.search(padrao_p, conteudo, re.DOTALL)
+                if match_trecho:
+                    return self._formatar_para_voz(f"Parágrafo {num_p} de A Sentinela: {match_trecho.group(1).strip()}")
+                elif self._obter_groq():
+                    resp_groq = self._consultar_groq(f"Localize e leia apenas o parágrafo {num_p} e a pergunta dele deste artigo de A Sentinela:\n{conteudo}")
+                    if resp_groq:
+                        return resp_groq
+
+            if any(p in cmd for p in ["resumo", "recapitulação", "recapitulacao", "objetivo"]):
                 resp_ia = self._consultar_groq(comando_usuario, conteudo)
                 if resp_ia:
                     return resp_ia
+
             linhas = [l.strip() for l in conteudo.splitlines() if len(l.strip()) > 2]
-            leitura = ". ".join(linhas[:85])
+            leitura = ". ".join(linhas)
             return self._formatar_para_voz(f"Estudo de A Sentinela desta semana no J W ponto org: {leitura}")
 
         # 4. Apostila Vida e Ministério / Reunião da Semana

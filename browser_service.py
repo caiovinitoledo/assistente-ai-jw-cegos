@@ -108,11 +108,11 @@ class BrowserService:
                     url_sent = f"https://wol.jw.org{links_docs[1]}"
                     resp_sent = await client.get(url_sent)
                     texto_sent = self._limpar_html(resp_sent.text, "#article")
-                    partes_extraidas.append(f"Estudo de A Sentinela desta semana:\n{texto_sent[:5500]}")
+                    partes_extraidas.append(f"Estudo de A Sentinela desta semana:\n{texto_sent}")
 
                 if partes_extraidas:
                     return "\n\n".join(partes_extraidas)
-                return self._limpar_html(resp.text, "#regionMain")[:5000]
+                return self._limpar_html(resp.text, "#regionMain")
         except Exception as e:
             return f"Não foi possível carregar a reunião no jw.org no momento: {str(e)}"
 

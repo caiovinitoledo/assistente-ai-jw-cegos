@@ -312,14 +312,14 @@ async def web_app_celular():
       }
     }
 
-    // Divide textos grandes (como A Sentinela inteira) em partes lógicas de áudio (~1000 caracteres)
+    // Divide textos grandes em partes lógicas de áudio (~1600 caracteres) para menos transições
     function dividirTextoEmBlocosDeAudio(texto) {
       const frases = texto.split(/(?<=[.!?।:;])\s+/);
       const blocos = [];
       let atual = "";
 
       for (const f of frases) {
-        if ((atual + " " + f).trim().length <= 1100) {
+        if ((atual + " " + f).trim().length <= 1600) {
           atual = (atual + " " + f).trim();
         } else {
           if (atual) blocos.push(atual);
@@ -332,6 +332,24 @@ async def web_app_celular():
 
     let playlistBlocosAudio = [];
     let indiceBlocoAtual = 0;
+    let cacheProximoBlob = null;
+    let indiceBlobEmCache = -1;
+
+    // Baixa o áudio de um bloco antecipadamente nos bastidores (Pre-buffering)
+    async function preCarregarBloco(indice) {
+      if (indice >= playlistBlocosAudio.length || indice === indiceBlobEmCache) return;
+      try {
+        const res = await fetch('/falar-audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ texto: playlistBlocosAudio[indice] })
+        });
+        if (res.ok) {
+          cacheProximoBlob = await res.blob();
+          indiceBlobEmCache = indice;
+        }
+      } catch (e) {}
+    }
 
     async function falarComVozHumana(texto) {
       if (!texto) return;
@@ -344,6 +362,8 @@ async def web_app_celular():
         URL.revokeObjectURL(blobUrlAtual);
         blobUrlAtual = null;
       }
+      cacheProximoBlob = null;
+      indiceBlobEmCache = -1;
 
       playlistBlocosAudio = dividirTextoEmBlocosDeAudio(texto);
       indiceBlocoAtual = 0;
@@ -367,20 +387,30 @@ async def web_app_celular():
       txt.innerText = `🔊 LENDO...${progresso} (1 TOQUE P/ PAUSAR)`;
 
       try {
-        const res = await fetch('/falar-audio', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ texto: trechoAtual })
-        });
+        let blob;
+        // Se o bloco já foi baixado com antecedência, usa instantaneamente sem esperar nada!
+        if (indiceBlobEmCache === indiceBlocoAtual && cacheProximoBlob) {
+          blob = cacheProximoBlob;
+          cacheProximoBlob = null;
+          indiceBlobEmCache = -1;
+        } else {
+          const res = await fetch('/falar-audio', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ texto: trechoAtual })
+          });
+          if (!res.ok) throw new Error("Erro na síntese neural.");
+          blob = await res.blob();
+        }
 
-        if (!res.ok) throw new Error("Erro na síntese neural.");
-
-        const blob = await res.blob();
         if (blobUrlAtual) {
           URL.revokeObjectURL(blobUrlAtual);
         }
         blobUrlAtual = URL.createObjectURL(blob);
         audioAtual.src = blobUrlAtual;
+
+        // Já inicia o download do PRÓXIMO bloco agora mesmo enquanto este toca!
+        preCarregarBloco(indiceBlocoAtual + 1);
 
         audioAtual.onended = () => {
           indiceBlocoAtual++;
@@ -388,7 +418,6 @@ async def web_app_celular():
         };
 
         audioAtual.onerror = () => {
-          // Se um bloco falhar, pula para o próximo para não travar o restante
           indiceBlocoAtual++;
           tocarProximoBlocoPlaylist();
         };

@@ -12,8 +12,55 @@ Regras estritas:
 4. Quando receber conteúdo de reuniões, Bíblia ou publicações do jw.org, organize a leitura de forma agradável e fiel.
 """
 
+NUMEROS_EXTENSO = {
+    "um": "1", "dois": "2", "três": "3", "tres": "3", "quatro": "4", "cinco": "5",
+    "seis": "6", "sete": "7", "oito": "8", "nove": "9", "dez": "10",
+    "onze": "11", "doze": "12", "treze": "13", "quatorze": "14", "catorze": "14",
+    "quinze": "15", "dezesseis": "16", "dezessete": "17", "dezoito": "18",
+    "dezenove": "19", "vinte": "20", "primeiro": "1", "segundo": "2", "terceiro": "3",
+    "quarto": "4", "quinto": "5", "sexto": "6", "sétimo": "7", "setimo": "7",
+    "oitavo": "8", "nono": "9", "décimo": "10", "decimo": "10"
+}
+
+def extrair_numero_paragrafo(texto: str) -> str | None:
+    t = texto.lower()
+    # Verifica se tem dígito direto: "parágrafo 5", "paragrafo 12"
+    m = re.search(r"par[aá]grafo\s+(\d+)", t)
+    if m:
+        return m.group(1)
+    # Verifica por extenso: "parágrafo cinco", "parágrafo primeiro"
+    for palavra, num in NUMEROS_EXTENSO.items():
+        if re.search(rf"par[aá]grafo\s+{palavra}\b", t):
+            return num
+    return None
+
+def localizar_paragrafo_no_texto(conteudo: str, num_p: str) -> str | None:
+    linhas = [l.strip() for l in conteudo.splitlines() if l.strip()]
+    inicio_idx = -1
+    fim_idx = -1
+
+    # Procura a linha que começa com o número do parágrafo, inclusive parágrafos duplos (ex: "5.", "4-5.", "5-6.")
+    padrao_inicio = re.compile(rf"^(?:{num_p}(?:-\d+)?|\d+-{num_p})[\.\s]")
+
+    for i, linha in enumerate(linhas):
+        if padrao_inicio.match(linha):
+            inicio_idx = i
+            break
+
+    if inicio_idx == -1:
+        return None
+
+    # Procura onde começa o próximo parágrafo para delimitar o fim
+    padrao_proximo = re.compile(r"^\d+(?:-\d+)?[\.\s]")
+    for j in range(inicio_idx + 1, len(linhas)):
+        if padrao_proximo.match(linhas[j]):
+            fim_idx = j
+            break
+
+    trecho = " ".join(linhas[inicio_idx:fim_idx] if fim_idx != -1 else linhas[inicio_idx:inicio_idx + 8])
+    return trecho.strip()
+
 LIVROS_BIBLIA = [
-    "gênesis", "genesis", "êxodo", "exodo", "levítico", "levitico", "números", "numeros",
     "deuteronômio", "deuteronomio", "josué", "josue", "juízes", "juizes", "rute",
     "samuel", "reis", "crônicas", "cronicas", "esdras", "neemias", "ester", "jó", "jo",
     "salmos", "salmo", "provérbios", "proverbios", "eclesiastes", "cântico de salomão",
@@ -105,21 +152,18 @@ class AssistenteAcessivelIA:
             leitura = ". ".join(linhas[:35])
             return self._formatar_para_voz(f"Texto diário de hoje no J W ponto org: {leitura}")
 
-        # 3. Estudo de A Sentinela
-        if "sentinela" in cmd:
+        # 3. Estudo de A Sentinela (artigo inteiro ou parágrafo específico)
+        if "sentinela" in cmd or "parágrafo" in cmd or "paragrafo" in cmd:
             conteudo = await self.browser.obter_reuniao_semana_jw(tipo="sentinela")
             
-            # Se o usuário pediu parágrafo específico (ex: "Ler parágrafo 5 de A Sentinela")
-            match_paragrafo = re.search(r"par[aá]grafo\s+(\d+)", cmd)
-            if match_paragrafo:
-                num_p = match_paragrafo.group(1)
-                # Tenta localizar o início do parágrafo desejado
-                padrao_p = rf"(?:^|\.\s*)({num_p}\.\s+.*?)(?=(?:\.\s*\d+\.\s+)|$)"
-                match_trecho = re.search(padrao_p, conteudo, re.DOTALL)
-                if match_trecho:
-                    return self._formatar_para_voz(f"Parágrafo {num_p} de A Sentinela: {match_trecho.group(1).strip()}")
+            # Se o usuário pediu parágrafo específico (ex: "Ler parágrafo 5 de A Sentinela" ou "Ler parágrafo 2")
+            num_p = extrair_numero_paragrafo(cmd)
+            if num_p:
+                trecho = localizar_paragrafo_no_texto(conteudo, num_p)
+                if trecho:
+                    return self._formatar_para_voz(f"Parágrafo {num_p} de A Sentinela: {trecho}")
                 elif self._obter_groq():
-                    resp_groq = self._consultar_groq(f"Localize e leia apenas o parágrafo {num_p} e a pergunta dele deste artigo de A Sentinela:\n{conteudo}")
+                    resp_groq = self._consultar_groq(f"Leia exatamente o parágrafo {num_p} e a sua pergunta deste estudo de A Sentinela:\n{conteudo}")
                     if resp_groq:
                         return resp_groq
 

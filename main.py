@@ -134,13 +134,13 @@ async def web_app_celular():
   </style>
 </head>
 <body>
-  <button id="btnVoz" class="btn-voz" onclick="iniciarOuInterromper()">
+  <button id="btnVoz" class="btn-voz" onclick="lidarComToque()">
     <div id="txtBotao" class="titulo">🎙️ TOQUE PARA FALAR</div>
     <div id="txtComando" class="subtitulo">Ex: "Ler Salmos 83 18", "Ler A Sentinela", "Ler a reunião"</div>
   </button>
 
-  <div class="area-leitura" onclick="iniciarOuInterromper()">
-    <div class="rotulo">🔊 TOQUE EM QUALQUER LUGAR DA TELA PARA PARAR E FALAR</div>
+  <div class="area-leitura" onclick="lidarComToque()">
+    <div class="rotulo">🔊 1 TOQUE: PAUSAR | 2 TOQUES: CONTINUAR | 1 TOQUE EM PAUSA: NOVO COMANDO</div>
     <div id="txtResposta" class="texto">
       Toque na tela e diga o que deseja ouvir. Por exemplo: Ler Salmos 83 18, Ler A Sentinela da semana ou Ler o texto diário.
     </div>
@@ -163,9 +163,13 @@ async def web_app_celular():
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let recognition = null;
     let processando = false;
-    let falandoAgora = false;
     let audioAtual = document.getElementById('playerAudio');
     let blobUrlAtual = null;
+
+    // Estados da Máquina de Áudio: 'ocioso', 'falando', 'pausado', 'ouvindo'
+    let estadoAtual = 'ocioso';
+    let timerCliqueDuplo = null;
+    let ultimoTempoClique = 0;
 
     function tocarBip(freq = 660, duracao = 120) {
       try {
@@ -181,19 +185,6 @@ async def web_app_celular():
       } catch (e) {}
     }
 
-    function pararTudo() {
-      falandoAgora = false;
-      if (audioAtual) {
-        audioAtual.pause();
-        audioAtual.currentTime = 0;
-      }
-      if (blobUrlAtual) {
-        URL.revokeObjectURL(blobUrlAtual);
-        blobUrlAtual = null;
-      }
-      pararMicrofone();
-    }
-
     function pararMicrofone() {
       if (recognition) {
         try { recognition.abort(); } catch (e) {}
@@ -205,7 +196,10 @@ async def web_app_celular():
 
     function iniciarEscuta() {
       if (processando) return;
-      pararTudo();
+      if (audioAtual) {
+        audioAtual.pause();
+      }
+      estadoAtual = 'ouvindo';
 
       if (!SpeechRecognition) {
         const manual = prompt("Digite seu pedido:");
@@ -238,12 +232,14 @@ async def web_app_celular():
       recognition.onerror = () => {
         btn.classList.remove('ouvindo');
         txt.innerText = "🎙️ TOQUE PARA FALAR";
+        estadoAtual = 'ocioso';
       };
 
       recognition.onend = () => {
         btn.classList.remove('ouvindo');
-        if (!falandoAgora && !processando) {
+        if (estadoAtual === 'ouvindo') {
           txt.innerText = "🎙️ TOQUE PARA FALAR";
+          estadoAtual = 'ocioso';
         }
       };
 
@@ -252,12 +248,83 @@ async def web_app_celular():
       } catch (e) {}
     }
 
-    // Busca o áudio via POST (sem limite de caracteres) e toca com voz neural humana
+    // Gerenciador de Toques Inteligente (Anti-Toque Acidental)
+    function lidarComToque() {
+      const agora = Date.now();
+      const intervalo = agora - ultimoTempoClique;
+      ultimoTempoClique = agora;
+
+      // DETECÇÃO DE DUPLO TOQUE (intervalo menor que 350ms)
+      if (intervalo < 350) {
+        if (timerCliqueDuplo) {
+          clearTimeout(timerCliqueDuplo);
+          timerCliqueDuplo = null;
+        }
+        executarAcaoDuploToque();
+        return;
+      }
+
+      // TOQUE ÚNICO COM DELAY PARA NÃO CONFLITAR COM DUPLO TOQUE
+      timerCliqueDuplo = setTimeout(() => {
+        executarAcaoToqueUnico();
+        timerCliqueDuplo = null;
+      }, 300);
+    }
+
+    function executarAcaoToqueUnico() {
+      if (estadoAtual === 'falando') {
+        // Pausa a leitura sem perder o ponto onde estava!
+        audioAtual.pause();
+        estadoAtual = 'pausado';
+        tocarBip(440, 90);
+        document.getElementById('txtBotao').innerText = "⏸️ PAUSADO (2 TOQUES P/ VOLTAR)";
+      } else if (estadoAtual === 'pausado') {
+        // Se já estava pausado e deu mais 1 toque, é porque quer dar um NOVO comando por voz!
+        tocarBip(660, 90);
+        iniciarEscuta();
+      } else if (estadoAtual === 'ouvindo') {
+        // Cancela a escuta
+        pararMicrofone();
+        estadoAtual = 'ocioso';
+        document.getElementById('txtBotao').innerText = "🎙️ TOQUE PARA FALAR";
+      } else {
+        // Ocioso: inicia escuta de comando
+        iniciarEscuta();
+      }
+    }
+
+    function executarAcaoDuploToque() {
+      if (estadoAtual === 'pausado') {
+        // Retoma exatamente de onde parou!
+        tocarBip(880, 120);
+        audioAtual.play().then(() => {
+          estadoAtual = 'falando';
+          document.getElementById('txtBotao').innerText = "🔊 LENDO... (1 TOQUE P/ PAUSAR)";
+        }).catch(() => {
+          iniciarEscuta();
+        });
+      } else if (estadoAtual === 'falando') {
+        // Se der dois toques enquanto fala, apenas confirma e continua lendo
+        tocarBip(880, 80);
+      } else {
+        // Se estava ocioso, abre escuta
+        iniciarEscuta();
+      }
+    }
+
     async function falarComVozHumana(texto) {
-      pararTudo();
       if (!texto) return;
 
-      falandoAgora = true;
+      if (audioAtual) {
+        audioAtual.pause();
+        audioAtual.currentTime = 0;
+      }
+      if (blobUrlAtual) {
+        URL.revokeObjectURL(blobUrlAtual);
+        blobUrlAtual = null;
+      }
+
+      estadoAtual = 'falando';
       const btn = document.getElementById('btnVoz');
       const txt = document.getElementById('txtBotao');
       btn.classList.add('carregando');
@@ -277,10 +344,10 @@ async def web_app_celular():
         audioAtual.src = blobUrlAtual;
 
         btn.classList.remove('carregando');
-        txt.innerText = "🔊 LENDO... (TOQUE P/ PARAR)";
+        txt.innerText = "🔊 LENDO... (1 TOQUE P/ PAUSAR)";
 
         audioAtual.onended = () => {
-          falandoAgora = false;
+          estadoAtual = 'ocioso';
           txt.innerText = "🎙️ TOQUE PARA FALAR";
           if (blobUrlAtual) {
             URL.revokeObjectURL(blobUrlAtual);
@@ -291,20 +358,24 @@ async def web_app_celular():
         audioAtual.onerror = () => {
           btn.classList.remove('carregando');
           txt.innerText = "🎙️ TOQUE PARA FALAR";
-          falandoAgora = false;
+          estadoAtual = 'ocioso';
         };
 
         await audioAtual.play();
       } catch (err) {
         btn.classList.remove('carregando');
         txt.innerText = "🎙️ TOQUE PARA FALAR";
-        falandoAgora = false;
+        estadoAtual = 'ocioso';
       }
     }
 
     async function processarComando(comando) {
       processando = true;
-      pararTudo();
+      if (audioAtual) {
+        audioAtual.pause();
+        audioAtual.currentTime = 0;
+      }
+      pararMicrofone();
 
       const btn = document.getElementById('btnVoz');
       const txt = document.getElementById('txtBotao');
@@ -331,19 +402,9 @@ async def web_app_celular():
       }
     }
 
-    function iniciarOuInterromper() {
-      if (falandoAgora) {
-        pararTudo();
-        tocarBip(440, 100);
-        document.getElementById('txtBotao').innerText = "🎙️ TOQUE PARA FALAR";
-      } else {
-        iniciarEscuta();
-      }
-    }
-
     window.addEventListener('load', () => {
       setTimeout(() => {
-        falarComVozHumana("Assistente acessível pronto. Toque em qualquer lugar da tela para falar.");
+        falarComVozHumana("Assistente acessível pronto. Toque na tela para falar.");
       }, 500);
     });
   </script>

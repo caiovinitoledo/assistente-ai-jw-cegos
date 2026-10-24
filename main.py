@@ -136,7 +136,7 @@ async def web_app_celular():
 <body>
   <button id="btnVoz" class="btn-voz" onclick="lidarComToque()">
     <div id="txtBotao" class="titulo">🎙️ TOQUE PARA FALAR</div>
-    <div id="txtComando" class="subtitulo">Ex: "Ler Salmos 83 18", "Ler A Sentinela", "Ler a reunião"</div>
+    <div id="txtComando" class="subtitulo">Ex: "Ler a leitura da Bíblia dessa semana", "Ler o estudo bíblico", "Ler A Sentinela"</div>
   </button>
 
   <div class="area-leitura" onclick="lidarComToque()">
@@ -312,12 +312,12 @@ async def web_app_celular():
       }
     }
 
-    // O primeiro bloco é menor (~800 chars) para começar a tocar instantaneamente em menos de 1s!
+    // O primeiro bloco é menor (~220 chars) para começar a tocar instantaneamente em menos de 0.5s!
     function dividirTextoEmBlocosDeAudio(texto) {
       const frases = texto.split(/(?<=[.!?।:;])\s+/);
       const blocos = [];
       let atual = "";
-      let limiteAtual = 800; // primeiro bloco ultrarrápido
+      let limiteAtual = 220; // primeiro bloco ultrarrápido
 
       for (const f of frases) {
         if ((atual + " " + f).trim().length <= limiteAtual) {
@@ -325,7 +325,7 @@ async def web_app_celular():
         } else {
           if (atual) blocos.push(atual);
           atual = f.trim();
-          limiteAtual = 1500; // blocos seguintes maiores
+          limiteAtual = 1200; // blocos seguintes maiores
         }
       }
       if (atual) blocos.push(atual);

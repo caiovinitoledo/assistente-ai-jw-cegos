@@ -12,6 +12,43 @@ Regras estritas:
 4. Quando receber conteúdo de reuniões, Bíblia ou publicações do jw.org, organize a leitura de forma agradável e fiel.
 """
 
+ABREVIACOES_BIBLIA = {
+    "gên.": "Gênesis", "gên": "Gênesis", "gen.": "Gênesis",
+    "êx.": "Êxodo", "êx": "Êxodo", "ex.": "Êxodo",
+    "lev.": "Levítico", "lev": "Levítico",
+    "núm.": "Números", "núm": "Números", "num.": "Números",
+    "deut.": "Deuteronômio", "deut": "Deuteronômio",
+    "jos.": "Josué", "jos": "Josué",
+    "juí.": "Juízes", "juí": "Juízes",
+    "rut.": "Rute",
+    "1 sam.": "1 Samuel", "2 sam.": "2 Samuel",
+    "1 reis": "1 Reis", "2 reis": "2 Reis",
+    "1 crô.": "1 Crônicas", "2 crô.": "2 Crônicas",
+    "esd.": "Esdras", "neem.": "Neemias", "est.": "Ester", "jó": "Jó",
+    "sal.": "Salmos", "sal": "Salmos",
+    "pr.": "Provérbios", "pr": "Provérbios", "prov.": "Provérbios",
+    "ecl.": "Eclesiastes", "ecl": "Eclesiastes",
+    "cânt.": "Cântico de Salomão",
+    "isa.": "Isaías", "isa": "Isaías",
+    "jer.": "Jeremias", "jer": "Jeremias",
+    "lam.": "Lamentações", "ezeq.": "Ezequiel", "dan.": "Daniel",
+    "osé.": "Oseias", "joel": "Joel", "amós": "Amós", "obad.": "Obadias",
+    "jon.": "Jonas", "miq.": "Miqueias", "naum": "Naum", "hab.": "Habacuque",
+    "sof.": "Sofonias", "ageu": "Ageu", "zac.": "Zacarias", "mal.": "Malaquias",
+    "mat.": "Mateus", "mat": "Mateus", "mt.": "Mateus",
+    "mar.": "Marcos", "luc.": "Lucas", "joão": "João", "jo.": "João",
+    "atos": "Atos", "rom.": "Romanos", "rom": "Romanos",
+    "1 cor.": "1 Coríntios", "2 cor.": "2 Coríntios",
+    "gál.": "Gálatas", "efés.": "Efésios", "fil.": "Filipenses",
+    "col.": "Colossenses", "1 tess.": "1 Tessalonicenses", "2 tess.": "2 Tessalonicenses",
+    "1 tim.": "1 Timóteo", "2 tim.": "2 Timóteo", "tito": "Tito",
+    "filêm.": "Filêmon", "filêm": "Filêmon", "flm.": "Filêmon", "filem.": "Filêmon",
+    "heb.": "Hebreus", "heb": "Hebreus",
+    "tia.": "Tiago", "1 ped.": "1 Pedro", "2 ped.": "2 Pedro",
+    "1 joão": "1 João", "2 joão": "2 João", "3 joão": "3 João",
+    "jud.": "Judas", "apo.": "Apocalipse", "apoc.": "Apocalipse", "rev.": "Apocalipse"
+}
+
 NUMEROS_EXTENSO = {
     "um": "1", "dois": "2", "três": "3", "tres": "3", "quatro": "4", "cinco": "5",
     "seis": "6", "sete": "7", "oito": "8", "nove": "9", "dez": "10",
@@ -59,6 +96,60 @@ def localizar_paragrafo_no_texto(conteudo: str, num_p: str) -> str | None:
 
     trecho = " ".join(linhas[inicio_idx:fim_idx] if fim_idx != -1 else linhas[inicio_idx:inicio_idx + 8])
     return trecho.strip()
+
+async def expandir_citacoes_biblicas_no_paragrafo(texto: str, browser: BrowserService) -> str:
+    """
+    Localiza todas as citações abreviadas da Bíblia no parágrafo (ex: 'Pr. 27:11', 'Jer. 45:3', 'Filêm. 9'),
+    busca os versículos no jw.org e insere:
+    'Lendo Provérbios 27:11: [versículo]. Retornando ao parágrafo.'
+    """
+    # Regex para capturar abreviações seguidas de capítulo:versículo
+    # Ex: ( Filêm. 9 ), ( Isa. 32:17, 18 ), Pr. 27:11, Jer. 45:3
+    padrao = re.compile(
+        r"\(?\s*([123]\s+[a-zA-Záéíóúâêôãõç\.]+|[a-zA-Záéíóúâêôãõç\.]+)\s+(\d+(?::\d+(?:-\d+)?)?)\s*\)?",
+        re.IGNORECASE
+    )
+
+    matches = list(padrao.finditer(texto))
+    if not matches:
+        return texto
+
+    partes = []
+    ultimo_fim = 0
+
+    for m in matches:
+        abreviacao_bruta = m.group(1).lower().strip()
+        cap_vers = m.group(2).strip()
+        livro_extenso = ABREVIACOES_BIBLIA.get(abreviacao_bruta)
+
+        if not livro_extenso:
+            # Tenta sem o ponto final se tiver
+            livro_extenso = ABREVIACOES_BIBLIA.get(abreviacao_bruta.rstrip("."))
+
+        if livro_extenso:
+            ref_completa = f"{livro_extenso} {cap_vers}"
+            # Busca o texto na Tradução do Novo Mundo no jw.org
+            conteudo_v = await browser.ler_texto_biblico_jw(ref_completa)
+            linhas_v = [
+                l.strip()
+                for l in conteudo_v.splitlines()
+                if len(l.strip()) > 1
+                and not l.lower().startswith(ref_completa.lower())
+                and not l.isdigit()
+                and not l.startswith("(")
+                and not l.startswith('"')
+            ]
+            versiculo_limpo = " ".join(linhas_v[:3]).strip()
+
+            partes.append(texto[ultimo_fim:m.start()])
+            if versiculo_limpo:
+                partes.append(f" Lendo {ref_completa}: {versiculo_limpo}. Retornando ao parágrafo. ")
+            else:
+                partes.append(f" Lendo {ref_completa}. Retornando ao parágrafo. ")
+            ultimo_fim = m.end()
+
+    partes.append(texto[ultimo_fim:])
+    return "".join(partes)
 
 LIVROS_BIBLIA = [
     "deuteronômio", "deuteronomio", "josué", "josue", "juízes", "juizes", "rute",
@@ -156,12 +247,13 @@ class AssistenteAcessivelIA:
         if "sentinela" in cmd or "parágrafo" in cmd or "paragrafo" in cmd:
             conteudo = await self.browser.obter_reuniao_semana_jw(tipo="sentinela")
             
-            # Se o usuário pediu parágrafo específico (ex: "Ler parágrafo 5 de A Sentinela" ou "Ler parágrafo 2")
+            # Se o usuário pediu parágrafo específico (ex: "Ler parágrafo 2 de A Sentinela" ou "Ler parágrafo 5")
             num_p = extrair_numero_paragrafo(cmd)
             if num_p:
                 trecho = localizar_paragrafo_no_texto(conteudo, num_p)
                 if trecho:
-                    return self._formatar_para_voz(f"Parágrafo {num_p} de A Sentinela: {trecho}")
+                    trecho_expandido = await expandir_citacoes_biblicas_no_paragrafo(trecho, self.browser)
+                    return self._formatar_para_voz(f"Parágrafo {num_p} de A Sentinela: {trecho_expandido}")
                 elif self._obter_groq():
                     resp_groq = self._consultar_groq(f"Leia exatamente o parágrafo {num_p} e a sua pergunta deste estudo de A Sentinela:\n{conteudo}")
                     if resp_groq:
@@ -172,7 +264,9 @@ class AssistenteAcessivelIA:
                 if resp_ia:
                     return resp_ia
 
-            linhas = [l.strip() for l in conteudo.splitlines() if len(l.strip()) > 2]
+            # Para a leitura completa do artigo, expande as citações bíblicas
+            conteudo_expandido = await expandir_citacoes_biblicas_no_paragrafo(conteudo, self.browser)
+            linhas = [l.strip() for l in conteudo_expandido.splitlines() if len(l.strip()) > 2]
             leitura = ". ".join(linhas)
             return self._formatar_para_voz(f"Estudo de A Sentinela desta semana no J W ponto org: {leitura}")
 

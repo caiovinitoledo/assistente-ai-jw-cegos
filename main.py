@@ -52,8 +52,8 @@ async def sintetizar_voz_neural(dados: AudioRequest):
     if not texto:
         raise HTTPException(status_code=400, detail="Texto vazio.")
     try:
-        # Limita a 5000 caracteres por chamada para garantir resposta rápida
-        comunicador = edge_tts.Communicate(texto[:5000], VOZ_NEURAL_PADRAO, rate="+5%")
+        # Narração ligeiramente mais calma (-5%) para leitura clara e agradável
+        comunicador = edge_tts.Communicate(texto[:5000], VOZ_NEURAL_PADRAO, rate="-5%")
         dados_audio = bytearray()
         async for chunk in comunicador.stream():
             if chunk["type"] == "audio":

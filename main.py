@@ -1,15 +1,16 @@
 import os
 import tempfile
+import edge_tts
 import speech_recognition as sr
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from ai_agent import AssistenteAcessivelIA
 
 app = FastAPI(
     title="API Assistente de Voz Acessível",
-    description="Backend com Groq + JW.ORG para navegação acessível por voz",
+    description="Backend com Groq + JW.ORG + Vozes Neurais Realistas para navegação acessível",
 )
 
 @app.get("/")
@@ -26,6 +27,9 @@ app.add_middleware(
 
 assistente = AssistenteAcessivelIA()
 
+# Voz neural ultra-realista da Microsoft (Francisca ou Antonio)
+VOZ_NEURAL_PADRAO = "pt-BR-FranciscaNeural"
+
 class ComandoRequest(BaseModel):
     comando: str
 
@@ -36,6 +40,21 @@ class ComandoResponse(BaseModel):
 @app.get("/health")
 async def health_check():
     return {"status": "online", "modelo": assistente.model_name}
+
+@app.get("/falar-audio")
+async def sintetizar_voz_neural(texto: str = Query(..., min_length=1)):
+    """
+    Gera o áudio MP3 com voz neural humana ultra-realista usando Edge-TTS.
+    """
+    try:
+        comunicador = edge_tts.Communicate(texto[:4500], VOZ_NEURAL_PADRAO, rate="+5%")
+        dados_audio = bytearray()
+        async for chunk in comunicador.stream():
+            if chunk["type"] == "audio":
+                dados_audio.extend(chunk["data"])
+        return Response(content=bytes(dados_audio), media_type="audio/mpeg")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/manifest.json")
 async def pwa_manifest():
@@ -121,6 +140,8 @@ async def web_app_celular():
     </div>
   </div>
 
+  <audio id="playerAudio" style="display:none;"></audio>
+
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js');
@@ -137,8 +158,7 @@ async def web_app_celular():
     let recognition = null;
     let processando = false;
     let falandoAgora = false;
-    let filaFrases = [];
-    let idSessaoFala = 0;
+    let audioAtual = document.getElementById('playerAudio');
 
     function tocarBip(freq = 660, duracao = 120) {
       try {
@@ -154,39 +174,12 @@ async def web_app_celular():
       } catch (e) {}
     }
 
-    function dividirTexto(texto) {
-      const frases = texto.split(/(?<=[.!?।:;])\\s+/);
-      const res = [];
-      let acc = "";
-      for (const f of frases) {
-        if ((acc + " " + f).trim().length <= 160) {
-          acc = (acc + " " + f).trim();
-        } else {
-          if (acc) res.push(acc);
-          if (f.length <= 160) {
-            acc = f.trim();
-          } else {
-            const palavras = f.split(" ");
-            acc = "";
-            for (const p of palavras) {
-              if ((acc + " " + p).trim().length <= 160) {
-                acc = (acc + " " + p).trim();
-              } else {
-                if (acc) res.push(acc);
-                acc = p;
-              }
-            }
-          }
-        }
-      }
-      if (acc) res.push(acc);
-      return res;
-    }
-
     function pararTudo() {
-      idSessaoFala++;
-      filaFrases = [];
       falandoAgora = false;
+      if (audioAtual) {
+        audioAtual.pause();
+        audioAtual.currentTime = 0;
+      }
       window.speechSynthesis.cancel();
       pararMicrofone();
     }
@@ -249,42 +242,49 @@ async def web_app_celular():
       } catch (e) {}
     }
 
-    function falar(texto) {
+    // Toca a voz neural ultra-realista vinda do backend (Edge-TTS)
+    // Se o backend falhar, usa a melhor voz neural nativa do navegador como fallback
+    async function falarComVozHumana(texto) {
       pararTudo();
       if (!texto) return;
 
       falandoAgora = true;
-      const sessao = idSessaoFala;
-      filaFrases = dividirTexto(texto);
-
       const btn = document.getElementById('btnVoz');
       const txt = document.getElementById('txtBotao');
-      txt.innerText = "🔊 LENDO... (TOQUE P/ PARAR)";
+      txt.innerText = "🔊 LENDO COM VOZ NEURAL... (TOQUE P/ PARAR)";
 
-      function proximaFrase() {
-        if (sessao !== idSessaoFala) return;
-        if (filaFrases.length === 0) {
+      try {
+        const urlAudio = `/falar-audio?texto=${encodeURIComponent(texto)}`;
+        audioAtual.src = urlAudio;
+        audioAtual.onended = () => {
           falandoAgora = false;
           txt.innerText = "🎙️ TOQUE PARA FALAR";
-          return;
-        }
-
-        const frase = filaFrases.shift();
-        const utter = new SpeechSynthesisUtterance(frase);
-        utter.lang = 'pt-BR';
-        utter.rate = 1.05;
-
-        utter.onend = () => {
-          if (sessao === idSessaoFala) proximaFrase();
         };
-        utter.onerror = () => {
-          if (sessao === idSessaoFala) proximaFrase();
+        audioAtual.onerror = () => {
+          falarFallbackNavegador(texto);
         };
-
-        window.speechSynthesis.speak(utter);
+        await audioAtual.play();
+      } catch (err) {
+        falarFallbackNavegador(texto);
       }
+    }
 
-      proximaFrase();
+    function falarFallbackNavegador(texto) {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(texto.slice(0, 300));
+      utter.lang = 'pt-BR';
+      utter.rate = 1.0;
+
+      // Procura vozes neurais instaladas no aparelho (Google Natural ou similares)
+      const vozes = window.speechSynthesis.getVoices();
+      const melhorVoz = vozes.find(v => v.lang.startsWith('pt') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Luciana')));
+      if (melhorVoz) utter.voice = melhorVoz;
+
+      utter.onend = () => {
+        falandoAgora = false;
+        document.getElementById('txtBotao').innerText = "🎙️ TOQUE PARA FALAR";
+      };
+      window.speechSynthesis.speak(utter);
     }
 
     async function processarComando(comando) {
@@ -308,11 +308,11 @@ async def web_app_celular():
         document.getElementById('txtResposta').innerText = resposta;
         processando = false;
         btn.classList.remove('carregando');
-        falar(resposta);
+        falarComVozHumana(resposta);
       } catch (err) {
         processando = false;
         btn.classList.remove('carregando');
-        falar("Erro ao conectar ao servidor. Verifique a conexão.");
+        falarComVozHumana("Erro ao conectar ao servidor. Verifique a conexão.");
       }
     }
 
@@ -328,7 +328,7 @@ async def web_app_celular():
 
     window.addEventListener('load', () => {
       setTimeout(() => {
-        falar("Assistente acessível pronto. Toque em qualquer lugar da tela para falar.");
+        falarComVozHumana("Assistente acessível carregado. Toque em qualquer lugar da tela para falar.");
       }, 500);
     });
   </script>

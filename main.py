@@ -2,7 +2,7 @@ import os
 import tempfile
 import edge_tts
 import speech_recognition as sr
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
@@ -27,7 +27,6 @@ app.add_middleware(
 
 assistente = AssistenteAcessivelIA()
 
-# Voz neural ultra-realista da Microsoft (Francisca ou Antonio)
 VOZ_NEURAL_PADRAO = "pt-BR-FranciscaNeural"
 
 class ComandoRequest(BaseModel):
@@ -37,17 +36,24 @@ class ComandoResponse(BaseModel):
     comando_reconhecido: str
     resposta_falada: str
 
+class AudioRequest(BaseModel):
+    texto: str
+
 @app.get("/health")
 async def health_check():
     return {"status": "online", "modelo": assistente.model_name}
 
-@app.get("/falar-audio")
-async def sintetizar_voz_neural(texto: str = Query(..., min_length=1)):
+@app.post("/falar-audio")
+async def sintetizar_voz_neural(dados: AudioRequest):
     """
-    Gera o áudio MP3 com voz neural humana ultra-realista usando Edge-TTS.
+    Gera o áudio MP3 com voz neural humana via POST (sem limite de tamanho de URL).
     """
+    texto = dados.texto.strip()
+    if not texto:
+        raise HTTPException(status_code=400, detail="Texto vazio.")
     try:
-        comunicador = edge_tts.Communicate(texto[:4500], VOZ_NEURAL_PADRAO, rate="+5%")
+        # Limita a 5000 caracteres por chamada para garantir resposta rápida
+        comunicador = edge_tts.Communicate(texto[:5000], VOZ_NEURAL_PADRAO, rate="+5%")
         dados_audio = bytearray()
         async for chunk in comunicador.stream():
             if chunk["type"] == "audio":
@@ -159,6 +165,7 @@ async def web_app_celular():
     let processando = false;
     let falandoAgora = false;
     let audioAtual = document.getElementById('playerAudio');
+    let blobUrlAtual = null;
 
     function tocarBip(freq = 660, duracao = 120) {
       try {
@@ -180,7 +187,10 @@ async def web_app_celular():
         audioAtual.pause();
         audioAtual.currentTime = 0;
       }
-      window.speechSynthesis.cancel();
+      if (blobUrlAtual) {
+        URL.revokeObjectURL(blobUrlAtual);
+        blobUrlAtual = null;
+      }
       pararMicrofone();
     }
 
@@ -242,8 +252,7 @@ async def web_app_celular():
       } catch (e) {}
     }
 
-    // Toca a voz neural ultra-realista vinda do backend (Edge-TTS)
-    // Se o backend falhar, usa a melhor voz neural nativa do navegador como fallback
+    // Busca o áudio via POST (sem limite de caracteres) e toca com voz neural humana
     async function falarComVozHumana(texto) {
       pararTudo();
       if (!texto) return;
@@ -251,40 +260,46 @@ async def web_app_celular():
       falandoAgora = true;
       const btn = document.getElementById('btnVoz');
       const txt = document.getElementById('txtBotao');
-      txt.innerText = "🔊 LENDO COM VOZ NEURAL... (TOQUE P/ PARAR)";
+      btn.classList.add('carregando');
+      txt.innerText = "⏳ GERANDO VOZ HUMANA...";
 
       try {
-        const urlAudio = `/falar-audio?texto=${encodeURIComponent(texto)}`;
-        audioAtual.src = urlAudio;
+        const res = await fetch('/falar-audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ texto: texto })
+        });
+
+        if (!res.ok) throw new Error("Erro na síntese neural.");
+
+        const blob = await res.blob();
+        blobUrlAtual = URL.createObjectURL(blob);
+        audioAtual.src = blobUrlAtual;
+
+        btn.classList.remove('carregando');
+        txt.innerText = "🔊 LENDO... (TOQUE P/ PARAR)";
+
         audioAtual.onended = () => {
           falandoAgora = false;
           txt.innerText = "🎙️ TOQUE PARA FALAR";
+          if (blobUrlAtual) {
+            URL.revokeObjectURL(blobUrlAtual);
+            blobUrlAtual = null;
+          }
         };
+
         audioAtual.onerror = () => {
-          falarFallbackNavegador(texto);
+          btn.classList.remove('carregando');
+          txt.innerText = "🎙️ TOQUE PARA FALAR";
+          falandoAgora = false;
         };
+
         await audioAtual.play();
       } catch (err) {
-        falarFallbackNavegador(texto);
-      }
-    }
-
-    function falarFallbackNavegador(texto) {
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(texto.slice(0, 300));
-      utter.lang = 'pt-BR';
-      utter.rate = 1.0;
-
-      // Procura vozes neurais instaladas no aparelho (Google Natural ou similares)
-      const vozes = window.speechSynthesis.getVoices();
-      const melhorVoz = vozes.find(v => v.lang.startsWith('pt') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Luciana')));
-      if (melhorVoz) utter.voice = melhorVoz;
-
-      utter.onend = () => {
+        btn.classList.remove('carregando');
+        txt.innerText = "🎙️ TOQUE PARA FALAR";
         falandoAgora = false;
-        document.getElementById('txtBotao').innerText = "🎙️ TOQUE PARA FALAR";
-      };
-      window.speechSynthesis.speak(utter);
+      }
     }
 
     async function processarComando(comando) {
@@ -308,11 +323,11 @@ async def web_app_celular():
         document.getElementById('txtResposta').innerText = resposta;
         processando = false;
         btn.classList.remove('carregando');
-        falarComVozHumana(resposta);
+        await falarComVozHumana(resposta);
       } catch (err) {
         processando = false;
         btn.classList.remove('carregando');
-        falarComVozHumana("Erro ao conectar ao servidor. Verifique a conexão.");
+        await falarComVozHumana("Não foi possível conectar ao servidor. Por favor, tente novamente.");
       }
     }
 
@@ -328,7 +343,7 @@ async def web_app_celular():
 
     window.addEventListener('load', () => {
       setTimeout(() => {
-        falarComVozHumana("Assistente acessível carregado. Toque em qualquer lugar da tela para falar.");
+        falarComVozHumana("Assistente acessível pronto. Toque em qualquer lugar da tela para falar.");
       }, 500);
     });
   </script>

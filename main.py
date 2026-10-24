@@ -312,18 +312,20 @@ async def web_app_celular():
       }
     }
 
-    // Divide textos grandes em partes lógicas de áudio (~1600 caracteres) para menos transições
+    // O primeiro bloco é menor (~800 chars) para começar a tocar instantaneamente em menos de 1s!
     function dividirTextoEmBlocosDeAudio(texto) {
       const frases = texto.split(/(?<=[.!?।:;])\s+/);
       const blocos = [];
       let atual = "";
+      let limiteAtual = 800; // primeiro bloco ultrarrápido
 
       for (const f of frases) {
-        if ((atual + " " + f).trim().length <= 1600) {
+        if ((atual + " " + f).trim().length <= limiteAtual) {
           atual = (atual + " " + f).trim();
         } else {
           if (atual) blocos.push(atual);
           atual = f.trim();
+          limiteAtual = 1500; // blocos seguintes maiores
         }
       }
       if (atual) blocos.push(atual);

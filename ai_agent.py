@@ -237,7 +237,12 @@ class AssistenteAcessivelIA:
     async def processar_comando(self, comando_usuario: str) -> str:
         cmd = re.sub(r"^(ok\s+|ei\s+|olá\s+|ola\s+)?assistente[,:\s]*", "", comando_usuario.lower().strip())
 
-        # 1. Leitura de texto da Bíblia
+        # 1. Leitura da Bíblia da semana (designação da reunião de meio de semana)
+        if any(p in cmd for p in ["leitura da bíblia dessa semana", "leitura da biblia dessa semana", "leitura da bíblia da semana", "leitura da biblia da semana", "leitura bíblica da semana", "leitura biblica da semana", "parte da bíblia dessa semana", "parte da biblia dessa semana"]):
+            conteudo = await self.browser.obter_leitura_biblica_semanal_completa()
+            return self._formatar_para_voz(conteudo)
+
+        # 2. Leitura de texto específico da Bíblia (ex: "Ler Salmos 83 18", "João 17 3")
         ref_biblica = self._extrair_referencia_biblica(cmd)
         if ref_biblica:
             conteudo = await self.browser.ler_texto_biblico_jw(ref_biblica)
@@ -245,18 +250,26 @@ class AssistenteAcessivelIA:
             leitura = ". ".join(linhas[:35])
             return self._formatar_para_voz(f"Leitura bíblica no J W ponto org, {ref_biblica}: {leitura}")
 
-        # 2. Texto Diário
+        # 3. Texto Diário (com regra de expansão dos textos citados no comentário)
         if any(p in cmd for p in ["texto diário", "texto diario", "texto de hoje", "examine as escrituras"]):
             conteudo = await self.browser.obter_texto_diario_jw()
-            linhas = [l.strip() for l in conteudo.splitlines() if len(l.strip()) > 2]
-            leitura = ". ".join(linhas[:35])
+            conteudo_expandido = await expandir_citacoes_biblicas_no_paragrafo(conteudo, self.browser)
+            linhas = [l.strip() for l in conteudo_expandido.splitlines() if len(l.strip()) > 2]
+            leitura = ". ".join(linhas)
             return self._formatar_para_voz(f"Texto diário de hoje no J W ponto org: {leitura}")
 
-        # 3. Estudo de A Sentinela (artigo inteiro ou parágrafo específico)
+        # 4. Estudo Bíblico de Congregação (Estudo de Livro da semana)
+        if any(p in cmd for p in ["estudo bíblico dessa semana", "estudo biblico dessa semana", "estudo bíblico da semana", "estudo biblico da semana", "estudo de livro", "estudo bíblico de congregação", "estudo biblico de congregacao"]):
+            conteudo = await self.browser.obter_reuniao_semana_jw(tipo="estudo_livro")
+            conteudo_expandido = await expandir_citacoes_biblicas_no_paragrafo(conteudo, self.browser)
+            linhas = [l.strip() for l in conteudo_expandido.splitlines() if len(l.strip()) > 2]
+            leitura = ". ".join(linhas)
+            return self._formatar_para_voz(f"Estudo bíblico de congregação desta semana no J W ponto org: {leitura}")
+
+        # 5. Estudo de A Sentinela (artigo inteiro ou parágrafo específico)
         if "sentinela" in cmd or "parágrafo" in cmd or "paragrafo" in cmd:
             conteudo = await self.browser.obter_reuniao_semana_jw(tipo="sentinela")
             
-            # Se o usuário pediu parágrafo específico (ex: "Ler parágrafo 2 de A Sentinela" ou "Ler parágrafo 5")
             num_p = extrair_numero_paragrafo(cmd)
             if num_p:
                 trecho = localizar_paragrafo_no_texto(conteudo, num_p)
@@ -273,13 +286,12 @@ class AssistenteAcessivelIA:
                 if resp_ia:
                     return resp_ia
 
-            # Para a leitura completa do artigo, expande as citações bíblicas
             conteudo_expandido = await expandir_citacoes_biblicas_no_paragrafo(conteudo, self.browser)
             linhas = [l.strip() for l in conteudo_expandido.splitlines() if len(l.strip()) > 2]
             leitura = ". ".join(linhas)
             return self._formatar_para_voz(f"Estudo de A Sentinela desta semana no J W ponto org: {leitura}")
 
-        # 4. Apostila Vida e Ministério / Reunião da Semana
+        # 6. Reunião Completa ou Apostila Vida e Ministério
         if any(p in cmd for p in ["reunião", "reuniao", "vida e ministério", "vida e ministerio", "apostila", "tesouros"]):
             tipo = "vida_e_ministerio" if ("vida" in cmd or "apostila" in cmd or "tesouros" in cmd) else "completa"
             conteudo = await self.browser.obter_reuniao_semana_jw(tipo=tipo)

@@ -312,12 +312,13 @@ async def web_app_celular():
       }
     }
 
-    // O primeiro bloco é menor (~220 chars) para começar a tocar instantaneamente em menos de 0.5s!
+    // O primeiro bloco é curto (~180 chars) para começar instantaneamente (<0.5s),
+    // e os blocos seguintes têm ~420 chars (~30s de fala) para sintetizar em apenas 1.5s!
     function dividirTextoEmBlocosDeAudio(texto) {
       const frases = texto.split(/(?<=[.!?।:;])\s+/);
       const blocos = [];
       let atual = "";
-      let limiteAtual = 220; // primeiro bloco ultrarrápido
+      let limiteAtual = 180; // primeiro bloco ultrarrápido
 
       for (const f of frases) {
         if ((atual + " " + f).trim().length <= limiteAtual) {
@@ -325,7 +326,7 @@ async def web_app_celular():
         } else {
           if (atual) blocos.push(atual);
           atual = f.trim();
-          limiteAtual = 1200; // blocos seguintes maiores
+          limiteAtual = 420; // tamanho ideal para transição imperceptível (0 segundos de espera)
         }
       }
       if (atual) blocos.push(atual);
@@ -334,23 +335,26 @@ async def web_app_celular():
 
     let playlistBlocosAudio = [];
     let indiceBlocoAtual = 0;
-    let cacheProximoBlob = null;
-    let indiceBlobEmCache = -1;
+    const mapaPromessasBlobs = new Map();
 
-    // Baixa o áudio de um bloco antecipadamente nos bastidores (Pre-buffering)
-    async function preCarregarBloco(indice) {
-      if (indice >= playlistBlocosAudio.length || indice === indiceBlobEmCache) return;
-      try {
-        const res = await fetch('/falar-audio', {
+    // Requisita ou recupera a Promise do áudio MP3 sintetizado antecipadamente (Lookahead Buffer)
+    function obterAudioBloco(indice) {
+      if (indice >= playlistBlocosAudio.length) return null;
+      if (!mapaPromessasBlobs.has(indice)) {
+        const promessa = fetch('/falar-audio', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ texto: playlistBlocosAudio[indice] })
+        }).then(async res => {
+          if (!res.ok) throw new Error("Erro na síntese neural.");
+          return await res.blob();
+        }).catch(err => {
+          mapaPromessasBlobs.delete(indice);
+          return null;
         });
-        if (res.ok) {
-          cacheProximoBlob = await res.blob();
-          indiceBlobEmCache = indice;
-        }
-      } catch (e) {}
+        mapaPromessasBlobs.set(indice, promessa);
+      }
+      return mapaPromessasBlobs.get(indice);
     }
 
     async function falarComVozHumana(texto) {
@@ -364,11 +368,16 @@ async def web_app_celular():
         URL.revokeObjectURL(blobUrlAtual);
         blobUrlAtual = null;
       }
-      cacheProximoBlob = null;
-      indiceBlobEmCache = -1;
+      mapaPromessasBlobs.clear();
 
       playlistBlocosAudio = dividirTextoEmBlocosDeAudio(texto);
       indiceBlocoAtual = 0;
+
+      // Dispara o download imediato dos primeiros blocos em background (lookahead)
+      obterAudioBloco(0);
+      obterAudioBloco(1);
+      obterAudioBloco(2);
+
       tocarProximoBlocoPlaylist();
     }
 
@@ -384,35 +393,23 @@ async def web_app_celular():
       const btn = document.getElementById('btnVoz');
       const txt = document.getElementById('txtBotao');
       
-      const trechoAtual = playlistBlocosAudio[indiceBlocoAtual];
       const progresso = playlistBlocosAudio.length > 1 ? ` (${indiceBlocoAtual + 1}/${playlistBlocosAudio.length})` : "";
       txt.innerText = `🔊 LENDO...${progresso} (1 TOQUE P/ PAUSAR)`;
 
       try {
-        let blob;
-        // Se o bloco já foi baixado com antecedência, usa instantaneamente sem esperar nada!
-        if (indiceBlobEmCache === indiceBlocoAtual && cacheProximoBlob) {
-          blob = cacheProximoBlob;
-          cacheProximoBlob = null;
-          indiceBlobEmCache = -1;
-        } else {
-          const res = await fetch('/falar-audio', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ texto: trechoAtual })
-          });
-          if (!res.ok) throw new Error("Erro na síntese neural.");
-          blob = await res.blob();
-        }
+        // Dispara o download dos próximos 2 blocos enquanto este toca para garantir 0s de espera
+        obterAudioBloco(indiceBlocoAtual + 1);
+        obterAudioBloco(indiceBlocoAtual + 2);
+
+        const promessa = obterAudioBloco(indiceBlocoAtual);
+        const blob = promessa ? await promessa : null;
+        if (!blob) throw new Error("Falha ao carregar áudio");
 
         if (blobUrlAtual) {
           URL.revokeObjectURL(blobUrlAtual);
         }
         blobUrlAtual = URL.createObjectURL(blob);
         audioAtual.src = blobUrlAtual;
-
-        // Já inicia o download do PRÓXIMO bloco agora mesmo enquanto este toca!
-        preCarregarBloco(indiceBlocoAtual + 1);
 
         audioAtual.onended = () => {
           indiceBlocoAtual++;
@@ -437,6 +434,13 @@ async def web_app_celular():
         audioAtual.pause();
         audioAtual.currentTime = 0;
       }
+      if (blobUrlAtual) {
+        URL.revokeObjectURL(blobUrlAtual);
+        blobUrlAtual = null;
+      }
+      mapaPromessasBlobs.clear();
+      playlistBlocosAudio = [];
+      indiceBlocoAtual = 0;
       pararMicrofone();
 
       const btn = document.getElementById('btnVoz');

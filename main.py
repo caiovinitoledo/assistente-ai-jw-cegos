@@ -136,7 +136,7 @@ async def web_app_celular():
 <body>
   <button id="btnVoz" class="btn-voz" onclick="lidarComToque()">
     <div id="txtBotao" class="titulo">🎙️ TOQUE PARA FALAR</div>
-    <div id="txtComando" class="subtitulo">Ex: "Ler a leitura da Bíblia dessa semana", "Ler o estudo bíblico", "Ler A Sentinela"</div>
+    <div id="txtComando" class="subtitulo">Ex: "O que você pode fazer", "Ler A Sentinela", "Ler o estudo bíblico"</div>
   </button>
 
   <div class="area-leitura" onclick="lidarComToque()">

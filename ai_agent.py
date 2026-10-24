@@ -273,6 +273,31 @@ class AssistenteAcessivelIA:
     async def processar_comando(self, comando_usuario: str) -> str:
         cmd = re.sub(r"^(ok\s+|ei\s+|olá\s+|ola\s+)?assistente[,:\s]*", "", comando_usuario.lower().strip())
 
+        # 0. Ajuda, comandos disponíveis e explicação dos gestos da tela
+        if any(p in cmd for p in [
+            "o que você pode fazer", "o que voce pode fazer",
+            "o que pode fazer", "que você pode fazer", "que voce pode fazer",
+            "o que você faz", "o que voce faz",
+            "o que posso pedir", "o que posso falar",
+            "quais são os comandos", "quais sao os comandos",
+            "quais os comandos", "quais comandos",
+            "como funciona", "ajuda", "instruções", "instrucoes"
+        ]):
+            return (
+                "Eu sou o seu assistente de voz acessível. Veja o que você pode me pedir: "
+                "Posso ler o estudo de A Sentinela da semana inteiro ou um parágrafo específico, dizendo por exemplo: Ler parágrafo 5 de A Sentinela. "
+                "Posso ler o Estudo Bíblico de Congregação da semana, que é o livro da reunião. "
+                "Posso ler os capítulos da leitura bíblica dessa semana, que ficam no início da reunião. "
+                "Posso ler o texto diário de hoje e seus comentários com os versículos completos. "
+                "Posso ler qualquer texto da Bíblia Sagrada que você me falar, por exemplo: Ler Salmos 83 18 ou João 17 3. "
+                "E também posso pesquisar qualquer assunto no jw ponto org. "
+                "E se você tocar na tela sem querer, não precisa se preocupar: "
+                "com um toque você pausa o que eu estiver falando; "
+                "com dois toques rápidos eu volto a ler de onde parei; "
+                "e com mais um toque enquanto eu estiver em silêncio ou pausado, você pode falar um novo comando. "
+                "O que você gostaria de ouvir agora?"
+            )
+
         # 1. Leitura dos Capítulos da Bíblia da semana (no início da programação da reunião semanal, ex: JEREMIAS 45 a 46)
         if any(p in cmd for p in [
             "leitura da bíblia dessa semana", "leitura da biblia dessa semana",
@@ -377,7 +402,8 @@ class AssistenteAcessivelIA:
 
         return (
             f"Estou ouvindo. Você disse: {comando_usuario}. "
-            "Pode pedir: Ler a leitura da Bíblia dessa semana, "
+            "Você pode me perguntar: O que você pode fazer? "
+            "Ou pedir: Ler a leitura da Bíblia dessa semana, "
             "Ler o estudo bíblico dessa semana, Ler A Sentinela da semana, "
             "ou Ler o texto diário."
         )

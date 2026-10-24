@@ -100,11 +100,9 @@ def localizar_paragrafo_no_texto(conteudo: str, num_p: str) -> str | None:
 async def expandir_citacoes_biblicas_no_paragrafo(texto: str, browser: BrowserService) -> str:
     """
     Localiza todas as citações abreviadas da Bíblia no parágrafo (ex: 'Pr. 27:11', 'Jer. 45:3', 'Filêm. 9'),
-    busca os versículos no jw.org e insere:
-    'Lendo Provérbios 27:11: [versículo]. Retornando ao parágrafo.'
+    busca os versículos em paralelo e insere:
+    '[Livro Cap:Vers]. Lendo [Livro Cap:Vers]: [versículo]. Retornando ao parágrafo.'
     """
-    # Regex para capturar abreviações seguidas de capítulo:versículo
-    # Ex: ( Filêm. 9 ), ( Isa. 32:17, 18 ), Pr. 27:11, Jer. 45:3
     padrao = re.compile(
         r"\(?\s*([123]\s+[a-zA-Záéíóúâêôãõç\.]+|[a-zA-Záéíóúâêôãõç\.]+)\s+(\d+(?::\d+(?:-\d+)?)?)\s*\)?",
         re.IGNORECASE
@@ -114,22 +112,33 @@ async def expandir_citacoes_biblicas_no_paragrafo(texto: str, browser: BrowserSe
     if not matches:
         return texto
 
-    partes = []
-    ultimo_fim = 0
+    # Prepara as referências para busca em paralelo
+    tarefas_busca = []
+    itens_validos = []
 
     for m in matches:
         abreviacao_bruta = m.group(1).lower().strip()
         cap_vers = m.group(2).strip()
-        livro_extenso = ABREVIACOES_BIBLIA.get(abreviacao_bruta)
-
-        if not livro_extenso:
-            # Tenta sem o ponto final se tiver
-            livro_extenso = ABREVIACOES_BIBLIA.get(abreviacao_bruta.rstrip("."))
+        livro_extenso = ABREVIACOES_BIBLIA.get(abreviacao_bruta) or ABREVIACOES_BIBLIA.get(abreviacao_bruta.rstrip("."))
 
         if livro_extenso:
             ref_completa = f"{livro_extenso} {cap_vers}"
-            # Busca o texto na Tradução do Novo Mundo no jw.org
-            conteudo_v = await browser.ler_texto_biblico_jw(ref_completa)
+            tarefas_busca.append(browser.ler_texto_biblico_jw(ref_completa))
+            itens_validos.append((m, ref_completa))
+
+    if not tarefas_busca:
+        return texto
+
+    # Executa todas as buscas na Bíblia ao mesmo tempo em paralelo (muito mais rápido!)
+    import asyncio
+    resultados_versiculos = await asyncio.gather(*tarefas_busca, return_exceptions=True)
+
+    partes = []
+    ultimo_fim = 0
+
+    for (m, ref_completa), conteudo_v in zip(itens_validos, resultados_versiculos):
+        versiculo_limpo = ""
+        if isinstance(conteudo_v, str) and not conteudo_v.startswith("Erro"):
             linhas_v = [
                 l.strip()
                 for l in conteudo_v.splitlines()
@@ -141,12 +150,12 @@ async def expandir_citacoes_biblicas_no_paragrafo(texto: str, browser: BrowserSe
             ]
             versiculo_limpo = " ".join(linhas_v[:3]).strip()
 
-            partes.append(texto[ultimo_fim:m.start()])
-            if versiculo_limpo:
-                partes.append(f" Lendo {ref_completa}: {versiculo_limpo}. Retornando ao parágrafo. ")
-            else:
-                partes.append(f" Lendo {ref_completa}. Retornando ao parágrafo. ")
-            ultimo_fim = m.end()
+        partes.append(texto[ultimo_fim:m.start()])
+        if versiculo_limpo:
+            partes.append(f" {ref_completa}. Lendo {ref_completa}: {versiculo_limpo}. Retornando ao parágrafo. ")
+        else:
+            partes.append(f" {ref_completa}. Lendo {ref_completa}. Retornando ao parágrafo. ")
+        ultimo_fim = m.end()
 
     partes.append(texto[ultimo_fim:])
     return "".join(partes)

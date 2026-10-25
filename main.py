@@ -13,10 +13,6 @@ app = FastAPI(
     description="Backend com Groq + JW.ORG + Vozes Neurais Realistas para navegação acessível",
 )
 
-@app.get("/")
-async def root_redirect():
-    return RedirectResponse(url="/app")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -94,6 +90,7 @@ async def service_worker():
     """
     return HTMLResponse(content=js, media_type="application/javascript")
 
+@app.get("/", response_class=HTMLResponse)
 @app.get("/app", response_class=HTMLResponse)
 async def web_app_celular():
     return """
